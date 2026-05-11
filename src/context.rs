@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::timesync::timesync_listener;
-use crate::virtio::{VsockAction, VsockConfig};
+use crate::virtio::{VirtioDeviceConfig, VsockAction, VsockConfig};
 use anyhow::{anyhow, Context};
 use env_logger::{Builder, Env, Target};
 
@@ -202,10 +202,7 @@ impl TryFrom<Args> for KrunContext {
         if let Some(timesync_port) = args.timesync {
             let vsock_config = VsockConfig {
                 port: timesync_port,
-                socket_url: PathBuf::from(format!(
-                    "/tmp/krunkit_timesync_{}.sock",
-                    std::process::id()
-                )),
+                socket_url: Self::timesync_socket_path(),
                 action: VsockAction::Connect,
             };
             unsafe { vsock_config.krun_ctx_set(id)? }
@@ -217,6 +214,30 @@ impl TryFrom<Args> for KrunContext {
 }
 
 impl KrunContext {
+    /// Generate the timesync socket path for this process.
+    fn timesync_socket_path() -> PathBuf {
+        PathBuf::from(format!(
+            "/tmp/krunkit_timesync_{}.sock",
+            std::process::id()
+        ))
+    }
+
+    /// Collect all vsock socket paths that should be cleaned up on exit.
+    pub fn vsock_socket_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        for device in &self.args.devices {
+            if let VirtioDeviceConfig::Vsock(vsock) = device {
+                if vsock.action == VsockAction::Connect {
+                    paths.push(vsock.socket_url.clone());
+                }
+            }
+        }
+        if self.args.timesync.is_some() {
+            paths.push(Self::timesync_socket_path());
+        }
+        paths
+    }
+
     /// Spawn a thread to listen for shutdown requests and run the workload. If behaving properly,
     /// the main thread will never return from this function.
     pub fn run(&self) -> Result<(), anyhow::Error> {
