@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use core_foundation::runloop::{
-    kCFRunLoopCommonModes, CFRunLoopAddSource, CFRunLoopGetCurrent, CFRunLoopRun, __CFRunLoopSource,
+    __CFRunLoopSource, kCFRunLoopCommonModes, CFRunLoopAddSource, CFRunLoopGetCurrent, CFRunLoopRun,
 };
 use objc2_io_kit::{
     io_object_t, io_service_t, kIOMessageSystemHasPoweredOn, kIOMessageSystemWillPowerOn,
