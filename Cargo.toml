@@ -1,6 +1,6 @@
 [package]
 name = "krunkit"
-version = "1.2.2"
+version = "1.3.0"
 authors = ["The krunkit Authors"]
 edition = "2021"
 description = "CLI tool to start VMs with libkrun"
