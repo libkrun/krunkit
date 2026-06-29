@@ -215,6 +215,7 @@ the arguments.
 
 - `sharedDir`: Path to the host directory that will be shared with the guest.
 - `mountTag`: Tag to be used to mount the shared directory in the guest.
+- `permissionSemantics`: (Optional) Permission semantics to be used in the virtio-fs device. Supported values: `complete`, `simplified`. Default value is `simplified`.
 
 #### Example
 
@@ -222,6 +223,12 @@ This will share `/Users/user/shared-dir` with the guest:
 
 ```
 --device virtio-fs,sharedDir=/Users/user/shared-dir,mountTag=MOUNT_TAG
+```
+
+To use complete permission semantics:
+
+```
+--device virtio-fs,sharedDir=/Users/user/shared-dir,mountTag=MOUNT_TAG,permissionSemantics=complete
 ```
 
 ## Restful Service

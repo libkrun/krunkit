@@ -52,7 +52,14 @@ extern "C" {
     ) -> i32;
     fn krun_add_vsock_port2(ctx_id: u32, port: u32, c_filepath: *const c_char, listen: bool)
         -> i32;
-    fn krun_add_virtiofs(ctx_id: u32, c_tag: *const c_char, c_path: *const c_char) -> i32;
+    fn krun_add_virtiofs4(
+        ctx_id: u32,
+        c_tag: *const c_char,
+        c_path: *const c_char,
+        shm_size: u64,
+        read_only: bool,
+        semantics: u32,
+    ) -> i32;
     fn krun_set_console_output(ctx_id: u32, c_filepath: *const c_char) -> i32;
     fn krun_add_net_unixgram(
         ctx_id: u32,
@@ -88,6 +95,25 @@ impl FromStr for DiskImageFormat {
             "raw" => Ok(DiskImageFormat::Raw),
             "qcow2" => Ok(DiskImageFormat::Qcow2),
             _ => Err(anyhow!("unsupported disk image format")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum FsPermissions {
+    Complete = 0,
+    #[default]
+    Simplified = 1,
+}
+
+impl FromStr for FsPermissions {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "complete" => Ok(FsPermissions::Complete),
+            "simplified" => Ok(FsPermissions::Simplified),
+            _ => Err(anyhow!("unsupported permission semantics")),
         }
     }
 }
@@ -584,6 +610,8 @@ pub struct FsConfig {
 
     /// Guest mount tag for shared directory.
     pub mount_tag: PathBuf,
+
+    pub permission_semantics: FsPermissions,
 }
 
 impl FromStr for FsConfig {
@@ -602,6 +630,10 @@ impl FromStr for FsConfig {
         fs_config.mount_tag =
             PathBuf::from_str(mount_tag.as_str()).context("mountTag argument not a valid path")?;
 
+        if let Some(p) = args.remove("permissionSemantics") {
+            fs_config.permission_semantics = FsPermissions::from_str(p.as_str())?;
+        }
+
         check_unknown_args(args, "virtio-fs")?;
 
         Ok(fs_config)
@@ -614,7 +646,15 @@ impl KrunContextSet for FsConfig {
         let shared_dir_cstr = path_to_cstring(&self.shared_dir)?;
         let mount_tag_cstr = path_to_cstring(&self.mount_tag)?;
 
-        if krun_add_virtiofs(id, mount_tag_cstr.as_ptr(), shared_dir_cstr.as_ptr()) < 0 {
+        if krun_add_virtiofs4(
+            id,
+            mount_tag_cstr.as_ptr(),
+            shared_dir_cstr.as_ptr(),
+            0,
+            false,
+            self.permission_semantics.clone() as u32,
+        ) < 0
+        {
             return Err(anyhow!(format!(
                 "unable to add virtiofs shared directory {} with mount tag {}",
                 &self.shared_dir.display(),
