@@ -14,7 +14,7 @@
 
 The `slp/krunkit` tap is now deprecated. If you've ever installed `krunkit` from it, you'll need to remove all packages from that tap and then the tap itself:
 
-```
+```shell
 brew list --full-name | grep "^slp/krunkit/" | xargs brew uninstall
 brew untap slp/krunkit
 ```
@@ -23,8 +23,9 @@ brew untap slp/krunkit
 
 `krunkit` relies on `libkrun`. We provide a Homebrew repository to install `krunkit` and all of its dependencies, installable with:
 
-```
-brew tap slp/krun
+```shell
+brew tap libkrun/krun
+brew trust libkrun/krun
 brew install krunkit
 ```
 
@@ -34,14 +35,14 @@ As noted above, `krunkit` relies on `libkrun`. Ensure that is installed on your 
 
 Build and install using default `PREFIX` (`/usr/local`):
 
-```
+```shell
 make
 sudo make install
 ```
 
 To build with `libkrun` from *Homebrew* or *MacPorts* use the appropriate `PREFIX`:
 
-```
+```shell
 make PREFIX=/opt/homebrew
 sudo make install PREFIX=/opt/homebrew
 ```
