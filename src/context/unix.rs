@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
-
 use crate::{
+    cmdline::Args,
     status::{get_shutdown_eventfd, status_listener, RestfulUri},
     virtio::KrunContextSet,
 };
@@ -16,7 +15,9 @@ use std::{
     io,
 };
 
+#[cfg(target_os = "macos")]
 use crate::timesync::timesync_listener;
+#[cfg(target_os = "macos")]
 use crate::virtio::{VsockAction, VsockConfig};
 use anyhow::{anyhow, Context};
 use env_logger::{Builder, Env, Target};
@@ -199,6 +200,7 @@ impl TryFrom<Args> for KrunContext {
             }
         }
 
+        #[cfg(target_os = "macos")]
         if let Some(timesync_port) = args.timesync {
             let vsock_config = VsockConfig {
                 port: timesync_port,
