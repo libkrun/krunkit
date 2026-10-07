@@ -331,6 +331,29 @@ mod tests {
     }
 
     #[test]
+    fn virtio_blk_sync_mode() {
+        use crate::virtio::{BlkConfig, DiskSyncMode};
+        use std::str::FromStr;
+
+        let blk = |s: &str| BlkConfig::from_str(s).map(|b| b.sync);
+
+        assert_eq!(blk("path=/Users/user/d.raw").unwrap(), None);
+        assert_eq!(
+            blk("path=/Users/user/d.raw,sync=none").unwrap(),
+            Some(DiskSyncMode::None)
+        );
+        assert_eq!(
+            blk("path=/Users/user/d.raw,sync=relaxed").unwrap(),
+            Some(DiskSyncMode::Relaxed)
+        );
+        assert_eq!(
+            blk("path=/Users/user/d.raw,sync=full").unwrap(),
+            Some(DiskSyncMode::Full)
+        );
+        assert!(blk("path=/Users/user/d.raw,sync=fsync").is_err());
+    }
+
+    #[test]
     fn virtio_net_argument_ordering() {
         let in_order = super::parse_args(String::from(
             "unixSocketPath=/Users/user/vm-network.sock,mac=ff:ff:ff:ff:ff:ff",
@@ -480,7 +503,7 @@ mod tests {
             "--device",
             "virtio-serial,logFilePath=/Users/user/serial.log",
             "--device",
-            "virtio-blk,path=/Users/user/data.raw,format=raw",
+            "virtio-blk,path=/Users/user/data.raw,format=raw,sync=full",
             "--device",
             "virtio-vsock,port=1024,socketURL=/Users/user/vsock1.sock,listen",
             "--device",
@@ -703,6 +726,7 @@ mod tests {
         if let VirtioDeviceConfig::Blk(blk) = blk {
             assert_eq!(blk.path, PathBuf::from_str("/Users/user/data.raw").unwrap());
             assert_eq!(blk.format, DiskImageFormat::Raw);
+            assert_eq!(blk.sync, Some(DiskSyncMode::Full));
         } else {
             panic!("expected virtio-blk device as 4th device config argument");
         }
@@ -739,6 +763,7 @@ mod tests {
                 PathBuf::from_str("/Users/user/root.qcow2").unwrap()
             );
             assert_eq!(blk.format, DiskImageFormat::Qcow2);
+            assert_eq!(blk.sync, None);
         } else {
             panic!("expected virtio-blk device as 1st device config argument");
         }

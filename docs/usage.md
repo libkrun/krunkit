@@ -93,6 +93,14 @@ as a virtual machine's data disk(s) (`/dev/vd[b-z]`).
 
 - `path`: Path to the disk image file.
 - `format`: Format of the disk image. Supported formats: raw, qcow2.
+- `sync`: (Optional) How guest flush requests are carried out on the host. Unset, libkrun's
+platform default applies, which on macOS is `relaxed`.
+    - `full`: on macOS, `fcntl(F_FULLFSYNC)`, which asks the drive to flush all buffered data to
+    permanent storage.
+    - `relaxed`: on macOS, `fsync(2)`, which moves data to the drive but does not ask the drive to
+    flush its own buffers; per fsync(2), on a drive power loss some or none of that data may be
+    written, possibly out of order. Same as `full` on Linux.
+    - `none`: the device does not offer flush to the guest.
 
 #### Example
 

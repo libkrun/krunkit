@@ -50,6 +50,15 @@ extern "C" {
         disk_format: u32,
         read_only: bool,
     ) -> i32;
+    fn krun_add_disk3(
+        ctx_id: u32,
+        c_block_id: *const c_char,
+        c_disk_path: *const c_char,
+        disk_format: u32,
+        read_only: bool,
+        direct_io: bool,
+        sync_mode: u32,
+    ) -> i32;
     fn krun_add_vsock_port2(ctx_id: u32, port: u32, c_filepath: *const c_char, listen: bool)
         -> i32;
     fn krun_add_virtiofs4(
@@ -95,6 +104,31 @@ impl FromStr for DiskImageFormat {
             "raw" => Ok(DiskImageFormat::Raw),
             "qcow2" => Ok(DiskImageFormat::Qcow2),
             _ => Err(anyhow!("unsupported disk image format")),
+        }
+    }
+}
+
+/// How a virtio-blk device honors guest flush requests. Values match KRUN_SYNC_* in libkrun.h.
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DiskSyncMode {
+    /// Ignore VIRTIO_BLK_F_FLUSH.
+    None = 0,
+    /// Honor flushes; on macOS, fsync(2) without asking the drive to flush its cache.
+    Relaxed = 1,
+    /// Honor flushes down to physical media (F_FULLFSYNC on macOS).
+    Full = 2,
+}
+
+impl FromStr for DiskSyncMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "none" => Ok(DiskSyncMode::None),
+            "relaxed" => Ok(DiskSyncMode::Relaxed),
+            "full" => Ok(DiskSyncMode::Full),
+            _ => Err(anyhow!("unsupported disk sync mode")),
         }
     }
 }
@@ -194,6 +228,9 @@ pub struct BlkConfig {
 
     /// Format of the disk image.
     pub format: DiskImageFormat,
+
+    /// Flush handling. None leaves the choice to libkrun's platform default.
+    pub sync: Option<DiskSyncMode>,
 }
 
 impl FromStr for BlkConfig {
@@ -212,6 +249,10 @@ impl FromStr for BlkConfig {
             blk_config.format = DiskImageFormat::from_str(f.as_str())?;
         }
 
+        if let Some(s) = args.remove("sync") {
+            blk_config.sync = Some(DiskSyncMode::from_str(s.as_str())?);
+        }
+
         check_unknown_args(args, "virtio-blk")?;
 
         Ok(blk_config)
@@ -228,14 +269,25 @@ impl KrunContextSet for BlkConfig {
         let block_id_cstr = CString::new(basename).context("can't convert basename to cstring")?;
         let path_cstr = path_to_cstring(&self.path)?;
 
-        if krun_add_disk2(
-            id,
-            block_id_cstr.as_ptr(),
-            path_cstr.as_ptr(),
-            self.format as u32,
-            false,
-        ) < 0
-        {
+        let ret = match self.sync {
+            None => krun_add_disk2(
+                id,
+                block_id_cstr.as_ptr(),
+                path_cstr.as_ptr(),
+                self.format as u32,
+                false,
+            ),
+            Some(sync) => krun_add_disk3(
+                id,
+                block_id_cstr.as_ptr(),
+                path_cstr.as_ptr(),
+                self.format as u32,
+                false,
+                false,
+                sync as u32,
+            ),
+        };
+        if ret < 0 {
             return Err(anyhow!(format!(
                 "unable to set virtio-blk disk for {}",
                 self.path.display()
