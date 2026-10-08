@@ -1,7 +1,8 @@
 # krunkit Command Line
 
-`krunkit` can launch configurable virtual machines using macOS's hypervisor framework and the `libkrun` virtual
-machine monitor library. The `libkrun` virtual machine configuration can be specified from command line arguments.
+`krunkit` can launch configurable virtual machines using macOS's hypervisor framework or Windows Hypervisor
+Platform and the `libkrun` virtual machine monitor library. The `libkrun` virtual machine configuration can be 
+specified from command line arguments.
 
 Specifying a virtual machine's vCPU and RAM allocation is required. Adding devices is optional, yet most workloads
 will require a root disk to be useful.
@@ -64,11 +65,9 @@ This configures a virtual machine to use two vCPUs and 2048 MiB of RAM:
 --cpus 2 --memory 2048
 ```
 
-## Bootloader Configuration
-
 ### EFI bootloader
 
-`--bootloader efi` allows booting a disk image using EFI, which removes the need for providing external kernel/initrd/... jthe disk image bootloader will be started by the EFI firmware, which will in turn know which kernel it should be booting.
+`--bootloader efi` allows booting a disk image using EFI, which removes the need for providing external kernel/initrd/... the disk image bootloader will be started by the EFI firmware, which will in turn know which kernel it should be booting.
 
 #### Arguments
 - `variable-store`: path to a file which EFI can use to store its variables
@@ -271,3 +270,72 @@ The table below provides some data on how offloading effects the gvproxy and vmn
 | gvproxy       | krunkit  | false      |  1.47 Gbits/s |  2.58 Gbits/s |
 | gvproxy       | vfkit    | false      |  1.43 Gbits/s |  2.84 Gbits/s |
 
+## Bootloader Configuration on Windows
+
+On Windows, krunkit boots `edk2/OVMF.fd` by default. Use `--firmware-path PATH` to select another UEFI image.
+
+The Windows path can connect either `ttyS0` or `hvc0` to the host terminal. It supports raw and QCOW2
+`virtio-blk` images, path-based `virtio-net,type=unixstream` devices, and `virtio-vsock` Unix socket mappings.
+
+### Windows Limitations
+
+On Windows, only the following devices can be specified with `--device`:
+
+- `virtio-blk`
+- `virtio-net,type=unixstream,path=...`; `unixgram`, `unixSocketPath`, and `fd` backends are unsupported.
+- `virtio-vsock`
+- `virtio-fs` (requires `permissionSemantics=complete`; `simplified` is not supported on Windows)
+
+`virtio-serial`, `virtio-gpu`, and `virtio-input` are unsupported. `virtio-rng` is added
+automatically, but must not be specified with `--device`.
+
+The RESTful service (`--restful-uri`), `--timesync`, and nested virtualization (`--nested`) are not
+supported on Windows. Select the single console connected to the host terminal with
+`--console ttyS0` (the default) or `--console hvc0`. The guest image's bootloader must use the
+matching kernel `console=` argument; krunkit cannot change kernel arguments for UEFI disk boots.
+
+```powershell
+krunkit.exe --cpus 2 --memory 2G `
+  --firmware-path C:\vm\OVMF.fd `
+  --device virtio-blk,path=C:\vm\disk.raw,format=raw
+```
+
+### SSH on Windows
+
+Start gvproxy in a separate terminal. Its default virtual network assigns the guest `192.168.127.2`, and
+`-ssh-port 2222` forwards host port 2222 to guest port 22:
+
+```powershell
+gvproxy.exe -listen-qemu unix://C:/vm/network.sock -ssh-port 2222
+```
+
+Add the matching network device when starting krunkit:
+
+```powershell
+krunkit.exe --cpus 2 --memory 2G `
+  --firmware-path C:\vm\OVMF.fd `
+  --device virtio-blk,path=C:\vm\rootfs.raw,format=raw `
+  --device virtio-net,type=unixstream,path=C:\vm\network.sock,mac=5a:94:ef:e4:0c:ee,offloading=true
+```
+
+The guest must run DHCP on the virtio network interface and have `sshd` listening on port 22. Connect with:
+
+```powershell
+ssh.exe -p 2222 USER@127.0.0.1
+```
+
+### vsock on Windows
+
+The default `listen` action handles guest-initiated connections: libkrun connects guest port 1024 to an existing
+host Unix socket.
+
+```powershell
+--device virtio-vsock,port=1024,socketURL=C:\vm\guest-to-host.sock,listen
+```
+
+Use `connect` for host-initiated connections. Libkrun listens at the host socket path and forwards accepted
+connections to a service listening on guest CID 3, port 1024.
+
+```powershell
+--device virtio-vsock,port=1024,socketURL=C:\vm\host-to-guest.sock,connect
+```

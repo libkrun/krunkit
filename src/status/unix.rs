@@ -3,16 +3,17 @@
 use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
-    net::{Ipv4Addr, TcpListener},
+    net::TcpListener,
     os::{
         fd::{FromRawFd, RawFd},
         unix::net::UnixListener,
     },
-    str::FromStr,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+
+use super::RestfulUri;
 
 #[link(name = "krun")]
 extern "C" {
@@ -21,84 +22,8 @@ extern "C" {
 
 const VM_STATE_PATH: &str = "/vm/state";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum UriScheme {
-    Tcp,
-    Unix,
-    #[default]
-    None,
-}
-
-impl FromStr for UriScheme {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "tcp" => Ok(Self::Tcp),
-            "unix" => Ok(Self::Unix),
-            "none" => Ok(Self::None),
-            _ => Err(anyhow!("invalid scheme")),
-        }
-    }
-}
-
-/// Socket address in which the restful URI socket should listen on. Identical to Rust's
-/// SocketAddrV4, but requires a modified FromStr implementation due to how the address is
-/// presented on the command line.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum RestfulUri {
-    Tcp(Ipv4Addr, u16),
-    Unix(String),
-    #[default]
-    None,
-}
-
-impl FromStr for RestfulUri {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let expression = regex::Regex::new(r"^(?P<scheme>none|tcp|unix)://(?P<value>.*)").unwrap();
-        let Some(cap) = expression.captures(s) else {
-            return Err(anyhow!("invalid scheme input"));
-        };
-        let scheme = &cap["scheme"];
-        let value = &cap["value"];
-        match UriScheme::from_str(scheme)? {
-            UriScheme::Tcp => {
-                let (ip_addr, port) = parse_tcp_input(value)?;
-                Ok(Self::Tcp(ip_addr, port))
-            }
-            UriScheme::Unix => {
-                if value.is_empty() {
-                    return Err(anyhow!("empty unix socket path"));
-                }
-                Ok(Self::Unix(value.to_string()))
-            }
-            UriScheme::None => Ok(Self::None),
-        }
-    }
-}
-
-fn parse_tcp_input(input: &str) -> Result<(Ipv4Addr, u16), anyhow::Error> {
-    let mut parts: Vec<String> = input.split(':').map(|s| s.to_string()).collect();
-    if parts.len() != 2 {
-        return Err(anyhow!("restful URI formatted incorrectly"));
-    }
-
-    // Ipv4Address's FromStr does not understand that the "localhost" IP address translates to
-    // 127.0.0.1, this must be manually translated.
-    if &parts[0][..] == "localhost" {
-        parts[0] = String::from("127.0.0.1");
-    }
-
-    let ip_addr =
-        Ipv4Addr::from_str(&parts[0]).context("restful URI IP address formatted incorrectly")?;
-    let port = u16::from_str(&parts[1]).context("restful URI port number formatted incorrectly")?;
-    Ok((ip_addr, port))
-}
-
-/// Retrieve the shutdown event file descriptor initialized by libkrun.
-pub unsafe fn get_shutdown_eventfd(ctx_id: u32) -> i32 {
+/// Retrieve the shutdown event file descriptor / handle initialized by libkrun.
+pub unsafe fn get_shutdown_eventfd(ctx_id: u32) -> RawFd {
     let fd = krun_get_shutdown_eventfd(ctx_id);
     if fd < 0 {
         panic!("unable to retrieve krun shutdown file descriptor");
@@ -232,7 +157,7 @@ fn handle_incoming_stream<T: Read + Write>(
             let body = &buf[header_len..body_end];
 
             let state_req: VmStateRequest = match serde_json::from_slice(body) {
-                Ok(r) => r,
+                Ok(request) => request,
                 Err(_) => {
                     write_http_response(
                         stream,
@@ -263,9 +188,7 @@ fn handle_incoming_stream<T: Read + Write>(
                 }
             }
         }
-        _ => {
-            write_http_error(stream, 405, "Method Not Allowed");
-        }
+        _ => write_http_error(stream, 405, "Method Not Allowed"),
     }
 }
 
@@ -311,20 +234,21 @@ pub fn status_listener(
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Cursor, os::fd::AsRawFd};
+
     use super::*;
-    use std::io::Cursor;
 
     fn make_request(method: &str, path: &str, body: Option<&str>) -> Vec<u8> {
-        let mut req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
-        if let Some(b) = body {
-            req.push_str(&format!("Content-Length: {}\r\n", b.len()));
-            req.push_str("Content-Type: application/json\r\n");
+        let mut request = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
+        if let Some(body) = body {
+            request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+            request.push_str("Content-Type: application/json\r\n");
         }
-        req.push_str("\r\n");
-        if let Some(b) = body {
-            req.push_str(b);
+        request.push_str("\r\n");
+        if let Some(body) = body {
+            request.push_str(body);
         }
-        req.into_bytes()
+        request.into_bytes()
     }
 
     struct MockStream {
@@ -332,17 +256,18 @@ mod tests {
         written: Vec<u8>,
     }
 
-    impl std::io::Read for MockStream {
+    impl Read for MockStream {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             self.read.read(buf)
         }
     }
 
-    impl std::io::Write for MockStream {
+    impl Write for MockStream {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             self.written.extend_from_slice(buf);
             Ok(buf.len())
         }
+
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
@@ -353,13 +278,10 @@ mod tests {
             read: Cursor::new(request.to_vec()),
             written: Vec::new(),
         };
-
-        let (sock_a, _sock_b) = std::os::unix::net::UnixStream::pair().unwrap();
-        let mut shutdown_fd =
-            unsafe { File::from_raw_fd(std::os::fd::AsRawFd::as_raw_fd(&sock_a)) };
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut shutdown_fd = unsafe { File::from_raw_fd(socket.as_raw_fd()) };
 
         handle_incoming_stream(&mut stream, &mut shutdown_fd, stopping);
-
         std::mem::forget(shutdown_fd);
 
         String::from_utf8(stream.written).unwrap()
@@ -369,7 +291,7 @@ mod tests {
         response
             .split_whitespace()
             .nth(1)
-            .and_then(|s| s.parse().ok())
+            .and_then(|status| status.parse().ok())
             .unwrap()
     }
 
@@ -492,91 +414,5 @@ mod tests {
         assert_eq!(json["canStop"], true);
         assert_eq!(json["canHardStop"], true);
         assert_eq!(json["canPause"], false);
-    }
-
-    #[test]
-    fn parse_valid_unix_scheme() {
-        assert_eq!(
-            RestfulUri::Unix("/tmp/path".to_string()),
-            RestfulUri::from_str("unix:///tmp/path").unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_unix_scheme_missing_path() {
-        assert_eq!(
-            anyhow!("empty unix socket path").to_string(),
-            RestfulUri::from_str("unix://").err().unwrap().to_string()
-        );
-    }
-
-    #[test]
-    fn parse_unix_scheme_missing_slashes() {
-        assert_eq!(
-            anyhow!("invalid scheme input").to_string(),
-            RestfulUri::from_str("unix:").err().unwrap().to_string()
-        );
-    }
-
-    #[test]
-    fn parse_unix_scheme_misspelling() {
-        assert_eq!(
-            anyhow!("invalid scheme input").to_string(),
-            RestfulUri::from_str("uni://path")
-                .err()
-                .unwrap()
-                .to_string()
-        );
-    }
-
-    #[test]
-    fn parse_valid_tcp_scheme() {
-        assert_eq!(
-            RestfulUri::Tcp(Ipv4Addr::new(127, 0, 0, 1), 8080),
-            RestfulUri::from_str("tcp://localhost:8080").unwrap(),
-        );
-    }
-
-    #[test]
-    fn parse_tcp_scheme_missing_port() {
-        assert_eq!(
-            anyhow!("restful URI formatted incorrectly").to_string(),
-            RestfulUri::from_str("tcp://localhost")
-                .err()
-                .unwrap()
-                .to_string()
-        );
-    }
-
-    #[test]
-    fn parse_tcp_scheme_with_unix_path() {
-        assert_eq!(
-            anyhow!("restful URI formatted incorrectly").to_string(),
-            RestfulUri::from_str("tcp:///tmp/path")
-                .err()
-                .unwrap()
-                .to_string(),
-        );
-    }
-
-    #[test]
-    fn parse_valid_none_scheme() {
-        assert_eq!(RestfulUri::None, RestfulUri::from_str("none://").unwrap());
-    }
-
-    #[test]
-    fn parse_none_scheme_missing_postfix() {
-        assert_eq!(
-            anyhow!("invalid scheme input").to_string(),
-            RestfulUri::from_str("none").err().unwrap().to_string(),
-        );
-    }
-
-    #[test]
-    fn parse_random_string_scheme() {
-        assert_eq!(
-            anyhow!("invalid scheme input").to_string(),
-            RestfulUri::from_str("foobar").err().unwrap().to_string(),
-        );
     }
 }
