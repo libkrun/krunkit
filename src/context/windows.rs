@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{cmdline::Args, status::RestfulUri, virtio::windows::attach_devices};
+use crate::{
+    cmdline::{Args, Console},
+    status::RestfulUri,
+    virtio::windows::attach_devices,
+};
 use anyhow::{anyhow, Context};
 use std::{
     ffi::{c_char, c_void, CStr},
@@ -73,6 +77,12 @@ unsafe extern "C" {
     ) -> KrunResult;
     fn krun_vmm_builder_payload(builder: *mut KrunObject, payload: KrunObject);
     fn krun_vmm_builder_devices(builder: *mut KrunObject, devices: KrunObject);
+    fn krun_vmm_builder_add_serial_console(
+        builder: *mut KrunObject,
+        input_handle: u64,
+        output_handle: u64,
+        err_out: *mut KrunError,
+    ) -> KrunResult;
     fn krun_vmm_builder_acpi(
         builder: *mut KrunObject,
         enabled: bool,
@@ -114,25 +124,27 @@ impl TryFrom<Args> for KrunContext {
             return Err(anyhow!("unable to create libkrun device manager"));
         }
 
-        let console_builder = unsafe { krun_console_device_builder() };
-        let mut error = ptr::null_mut();
-        check_result(
-            unsafe {
-                krun_console_builder_add_default_console(
-                    console_builder,
-                    io::stdin().as_raw_handle().cast(),
-                    io::stdout().as_raw_handle().cast(),
-                    io::stderr().as_raw_handle().cast(),
-                    &mut error,
-                )
-            },
-            error,
-            "unable to configure virtio console",
-        )?;
-        let mut error = ptr::null_mut();
-        let console = unsafe { krun_console_builder_build(console_builder, &mut error) };
-        check_object(console, error, "unable to build virtio console")?;
-        unsafe { krun_mmio_device_manager_add(devices, console) };
+        if matches!(args.console, Console::Hvc0) {
+            let console_builder = unsafe { krun_console_device_builder() };
+            let mut error = ptr::null_mut();
+            check_result(
+                unsafe {
+                    krun_console_builder_add_default_console(
+                        console_builder,
+                        io::stdin().as_raw_handle().cast(),
+                        io::stdout().as_raw_handle().cast(),
+                        io::stderr().as_raw_handle().cast(),
+                        &mut error,
+                    )
+                },
+                error,
+                "unable to configure virtio console",
+            )?;
+            let mut error = ptr::null_mut();
+            let console = unsafe { krun_console_builder_build(console_builder, &mut error) };
+            check_object(console, error, "unable to build virtio console")?;
+            unsafe { krun_mmio_device_manager_add(devices, console) };
+        }
         add_device(
             devices,
             unsafe { krun_balloon_device_new(ptr::null_mut()) },
@@ -176,6 +188,21 @@ impl TryFrom<Args> for KrunContext {
             krun_vmm_builder_payload(&mut builder, payload);
             krun_vmm_builder_devices(&mut builder, devices)
         };
+        if matches!(args.console, Console::TtyS0) {
+            let mut error = ptr::null_mut();
+            check_result(
+                unsafe {
+                    krun_vmm_builder_add_serial_console(
+                        &mut builder,
+                        io::stdin().as_raw_handle() as u64,
+                        io::stdout().as_raw_handle() as u64,
+                        &mut error,
+                    )
+                },
+                error,
+                "unable to configure serial console",
+            )?;
+        }
         let mut error = ptr::null_mut();
         check_result(
             unsafe { krun_vmm_builder_acpi(&mut builder, true, &mut error) },

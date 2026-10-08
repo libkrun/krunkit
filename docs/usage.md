@@ -274,8 +274,8 @@ The table below provides some data on how offloading effects the gvproxy and vmn
 
 On Windows, krunkit boots `edk2/OVMF.fd` by default. Use `--firmware-path PATH` to select another UEFI image.
 
-The Windows path connects `ttyS0` to the host terminal. It supports raw and QCOW2 `virtio-blk` images,
-path-based `virtio-net,type=unixstream` devices, and `virtio-vsock` Unix socket mappings.
+The Windows path can connect either `ttyS0` or `hvc0` to the host terminal. It supports raw and QCOW2
+`virtio-blk` images, path-based `virtio-net,type=unixstream` devices, and `virtio-vsock` Unix socket mappings.
 
 ### Windows Limitations
 
@@ -290,8 +290,9 @@ On Windows, only the following devices can be specified with `--device`:
 automatically, but must not be specified with `--device`.
 
 The RESTful service (`--restful-uri`), `--timesync`, and nested virtualization (`--nested`) are not
-supported on Windows. The default console is connected directly to the host terminal; use it instead of a
-`virtio-serial` device for guest text output.
+supported on Windows. Select the single console connected to the host terminal with
+`--console ttyS0` (the default) or `--console hvc0`. The guest image's bootloader must use the
+matching kernel `console=` argument; krunkit cannot change kernel arguments for UEFI disk boots.
 
 ```powershell
 krunkit.exe --cpus 2 --memory 2G `

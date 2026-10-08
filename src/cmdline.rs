@@ -11,6 +11,18 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+#[cfg(target_os = "windows")]
+use clap::ValueEnum;
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum Console {
+    #[default]
+    #[value(name = "ttyS0")]
+    TtyS0,
+    #[value(name = "hvc0")]
+    Hvc0,
+}
 
 /// Command line arguments to configure a krun VM.
 #[derive(Clone, Debug, Parser)]
@@ -64,6 +76,11 @@ pub struct Args {
     /// Firmware path.
     #[arg(long, short)]
     pub firmware_path: Option<PathBuf>,
+
+    /// Guest console device attached to the host terminal.
+    #[cfg(target_os = "windows")]
+    #[arg(long, value_enum, default_value_t = Console::default())]
+    pub console: Console,
 
     /// Vsock port for timesync
     #[arg(long = "timesync", value_parser = parse_timesync)]
