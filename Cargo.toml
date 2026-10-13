@@ -16,8 +16,16 @@ sysinfo = "0.31.4"
 log = "0.4.0"
 env_logger = "0.11.8"
 regex = "1.11.1"
+[target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10.1"
 objc2-io-kit = "0.3.2"
 httparse = "1.10.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_System_Console",
+] }

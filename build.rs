@@ -1,4 +1,4 @@
-// SDPX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0
 
 fn main() {
     #[cfg(target_os = "macos")]
@@ -10,5 +10,14 @@ fn main() {
         println!("cargo:rustc-link-search={prefix}/lib");
 
         println!("cargo:rerun-if-env-changed=PREFIX");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let lib_dir = std::env::var("LIBKRUN_LIB_DIR")
+            .expect("LIBKRUN_LIB_DIR must point to the directory containing krun.dll.lib");
+        println!("cargo:rustc-link-search={lib_dir}");
+
+        println!("cargo:rerun-if-env-changed=LIBKRUN_LIB_DIR");
     }
 }

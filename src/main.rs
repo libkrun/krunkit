@@ -5,6 +5,7 @@
 mod cmdline;
 mod context;
 mod status;
+#[cfg(target_os = "macos")]
 mod timesync;
 mod virtio;
 

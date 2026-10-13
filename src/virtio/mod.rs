@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::cmdline::{
-    check_required_args, check_unknown_args, cstring_to_ptr, parse_args, parse_boolean,
-};
+use crate::cmdline::{check_required_args, check_unknown_args, parse_args, parse_boolean};
 
-use std::{
-    ffi::{c_char, c_int, CString},
-    os::fd::RawFd,
-    os::unix::ffi::OsStrExt,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
 use mac_address::MacAddress;
+#[cfg(unix)]
+pub type PlatformSocket = std::os::fd::RawFd;
+#[cfg(windows)]
+pub type PlatformSocket = std::os::windows::io::RawSocket;
 
 /// Taken from https://github.com/containers/libkrun/blob/7116644749c7b1028a970c9e8bd2d0163745a225/include/libkrun.h#L269
 const NET_FEATURE_CSUM: u32 = 1 << 0;
@@ -26,7 +22,7 @@ const NET_FEATURE_HOST_TSO6: u32 = 1 << 12;
 const NET_FEATURE_HOST_UFO: u32 = 1 << 14;
 
 /// These are the features enabled by krun_set_passt_fd and krun_set_gvproxy_path.
-const COMPAT_NET_FEATURES: u32 = NET_FEATURE_CSUM
+pub(crate) const COMPAT_NET_FEATURES: u32 = NET_FEATURE_CSUM
     | NET_FEATURE_GUEST_CSUM
     | NET_FEATURE_GUEST_TSO4
     | NET_FEATURE_GUEST_UFO
@@ -35,49 +31,18 @@ const COMPAT_NET_FEATURES: u32 = NET_FEATURE_CSUM
 
 /// Send the VFKIT magic after establishing the connection,
 /// as required by gvproxy in vfkit mode.
-const NET_FLAG_VFKIT: u32 = 1 << 0;
+pub(crate) const NET_FLAG_VFKIT: u32 = 1 << 0;
 
 const SOCK_TYPE_UNIX_SOCKET_PATH: &str = "unixSocketPath";
 const SOCK_TYPE_UNIXGRAM: &str = "unixgram";
 const SOCK_TYPE_UNIXSTREAM: &str = "unixstream";
 
-#[link(name = "krun")]
-extern "C" {
-    fn krun_add_disk2(
-        ctx_id: u32,
-        c_block_id: *const c_char,
-        c_disk_path: *const c_char,
-        disk_format: u32,
-        read_only: bool,
-    ) -> i32;
-    fn krun_add_vsock_port2(ctx_id: u32, port: u32, c_filepath: *const c_char, listen: bool)
-        -> i32;
-    fn krun_add_virtiofs4(
-        ctx_id: u32,
-        c_tag: *const c_char,
-        c_path: *const c_char,
-        shm_size: u64,
-        read_only: bool,
-        semantics: u32,
-    ) -> i32;
-    fn krun_set_console_output(ctx_id: u32, c_filepath: *const c_char) -> i32;
-    fn krun_add_net_unixgram(
-        ctx_id: u32,
-        c_path: *const c_char,
-        fd: c_int,
-        c_mac: *const u8,
-        features: u32,
-        flags: u32,
-    ) -> i32;
-    fn krun_add_net_unixstream(
-        ctx_id: u32,
-        c_path: *const c_char,
-        fd: c_int,
-        c_mac: *const u8,
-        features: u32,
-        flags: u32,
-    ) -> i32;
-}
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+pub use unix::KrunContextSet;
+#[cfg(windows)]
+pub(crate) mod windows;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -116,12 +81,6 @@ impl FromStr for FsPermissions {
             _ => Err(anyhow!("unsupported permission semantics")),
         }
     }
-}
-
-/// Each virito device configures itself with krun differently. This is used by each virtio device
-/// to set their respective configurations with libkrun.
-pub trait KrunContextSet {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error>;
 }
 
 /// virtio device configurations.
@@ -169,23 +128,6 @@ impl FromStr for VirtioDeviceConfig {
     }
 }
 
-/// Configure the device in the krun context based on which underlying device is contained.
-impl KrunContextSet for VirtioDeviceConfig {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error> {
-        match self {
-            Self::Blk(blk) => blk.krun_ctx_set(id),
-            Self::Vsock(vsock) => vsock.krun_ctx_set(id),
-            Self::Net(net) => net.krun_ctx_set(id),
-            Self::Fs(fs) => fs.krun_ctx_set(id),
-            Self::Serial(serial) => serial.krun_ctx_set(id),
-
-            // virtio-input, virtio-gpu, and virtio-rng devices are currently not configured in
-            // krun.
-            _ => Ok(()),
-        }
-    }
-}
-
 /// Configuration of a virtio-blk device.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlkConfig {
@@ -194,6 +136,8 @@ pub struct BlkConfig {
 
     /// Format of the disk image.
     pub format: DiskImageFormat,
+
+    pub serial: Option<String>,
 }
 
 impl FromStr for BlkConfig {
@@ -212,37 +156,15 @@ impl FromStr for BlkConfig {
             blk_config.format = DiskImageFormat::from_str(f.as_str())?;
         }
 
+        // Parse custom serial / id if provided.
+        if let Some(s) = args.remove("serial") {
+            blk_config.serial = Some(s);
+        } else if let Some(s) = args.remove("id") {
+            blk_config.serial = Some(s);
+        }
         check_unknown_args(args, "virtio-blk")?;
 
         Ok(blk_config)
-    }
-}
-
-/// Set the virtio-blk device to be the krun VM's root disk.
-impl KrunContextSet for BlkConfig {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error> {
-        let basename = match self.path.file_name() {
-            Some(osstr) => osstr.to_str().unwrap_or("disk"),
-            None => "disk",
-        };
-        let block_id_cstr = CString::new(basename).context("can't convert basename to cstring")?;
-        let path_cstr = path_to_cstring(&self.path)?;
-
-        if krun_add_disk2(
-            id,
-            block_id_cstr.as_ptr(),
-            path_cstr.as_ptr(),
-            self.format as u32,
-            false,
-        ) < 0
-        {
-            return Err(anyhow!(format!(
-                "unable to set virtio-blk disk for {}",
-                self.path.display()
-            )));
-        }
-
-        Ok(())
     }
 }
 
@@ -267,21 +189,6 @@ impl FromStr for SerialConfig {
             log_file_path: PathBuf::from_str(log_file_path.as_str())
                 .context("logFilePath argument not a valid path")?,
         })
-    }
-}
-
-/// Set the krun console output to be written to the virtio-serial's log file.
-impl KrunContextSet for SerialConfig {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error> {
-        let path_cstr = path_to_cstring(&self.log_file_path)?;
-
-        if krun_set_console_output(id, path_cstr.as_ptr()) < 0 {
-            return Err(anyhow!(
-                "unable to set krun console output redirection to virtio-serial log file"
-            ));
-        }
-
-        Ok(())
     }
 }
 
@@ -341,31 +248,6 @@ impl FromStr for VsockConfig {
     }
 }
 
-/// Map the virtio-vsock's guest port and host path to enable the krun VM to communicate with the
-/// socket on the host.
-impl KrunContextSet for VsockConfig {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error> {
-        let path_cstr = path_to_cstring(&self.socket_url)?;
-
-        // libkrun's `listen` parameter means "guest expects connections from host" which is true when VsockAction::Connect.
-        if krun_add_vsock_port2(
-            id,
-            self.port,
-            path_cstr.as_ptr(),
-            self.action == VsockAction::Connect,
-        ) < 0
-        {
-            return Err(anyhow!(format!(
-                "unable to add vsock port {} for path {}",
-                self.port,
-                &self.socket_url.display()
-            )));
-        }
-
-        Ok(())
-    }
-}
-
 /// virtio-vsock action.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum VsockAction {
@@ -393,7 +275,7 @@ impl FromStr for VsockAction {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SocketConfig {
     pub path: Option<PathBuf>,
-    pub fd: Option<RawFd>,
+    pub fd: Option<PlatformSocket>,
     pub offloading: bool,
     pub send_vfkit_magic: bool,
 }
@@ -501,7 +383,7 @@ fn parse_socket_config(
 
     if let Some(fd) = args.remove("fd") {
         socket_config.fd = Some(
-            fd.parse::<RawFd>()
+            fd.parse::<PlatformSocket>()
                 .context("virtio-net unable to convert \"fd\" value {fd} to a file descriptor")?,
         );
     }
@@ -526,80 +408,6 @@ fn parse_socket_config(
     }
 
     Ok((socket_type, socket_config))
-}
-
-/// Set the gvproxy's path and network MAC address.
-impl KrunContextSet for NetConfig {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error> {
-        match &self.socket_type {
-            SocketType::UnixGram => {
-                let features = if self.socket_config.offloading {
-                    COMPAT_NET_FEATURES
-                } else {
-                    0
-                };
-
-                let path = match &self.socket_config.path {
-                    Some(path) => path_to_cstring(path)?,
-                    None => path_to_cstring(&PathBuf::new())?,
-                };
-
-                let flags = if self.socket_config.send_vfkit_magic {
-                    NET_FLAG_VFKIT
-                } else {
-                    0
-                };
-
-                if krun_add_net_unixgram(
-                    id,
-                    cstring_to_ptr(&path),
-                    self.socket_config.fd.unwrap_or(-1),
-                    self.mac_address.bytes().as_ptr(),
-                    features,
-                    flags,
-                ) < 0
-                {
-                    // TODO(jakecorrenti): if this fails, we should display all of the values the
-                    // user provided to the virtio-net cmdline
-                    return Err(anyhow!(format!(
-                        "virtio-net unable to add device with unix datagram backend {:#?}",
-                        self.socket_config
-                    )));
-                }
-            }
-            SocketType::UnixStream => {
-                let features = if self.socket_config.offloading {
-                    COMPAT_NET_FEATURES
-                } else {
-                    0
-                };
-
-                let path = match &self.socket_config.path {
-                    Some(path) => path_to_cstring(path)?,
-                    None => path_to_cstring(&PathBuf::new())?,
-                };
-
-                if krun_add_net_unixstream(
-                    id,
-                    cstring_to_ptr(&path),
-                    self.socket_config.fd.unwrap_or(-1),
-                    self.mac_address.bytes().as_ptr(),
-                    features,
-                    0,
-                ) < 0
-                {
-                    // TODO(jakecorrenti): if this fails, we should display all of the values the
-                    // user provided to the virtio-net cmdline
-                    return Err(anyhow!(format!(
-                        "virtio-net unable to add device with unix stream backend {:#?}",
-                        self.socket_config
-                    )));
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 /// Configuration of a virtio-fs device.
@@ -637,32 +445,6 @@ impl FromStr for FsConfig {
         check_unknown_args(args, "virtio-fs")?;
 
         Ok(fs_config)
-    }
-}
-
-/// Set the shared directory with its guest mount tag.
-impl KrunContextSet for FsConfig {
-    unsafe fn krun_ctx_set(&self, id: u32) -> Result<(), anyhow::Error> {
-        let shared_dir_cstr = path_to_cstring(&self.shared_dir)?;
-        let mount_tag_cstr = path_to_cstring(&self.mount_tag)?;
-
-        if krun_add_virtiofs4(
-            id,
-            mount_tag_cstr.as_ptr(),
-            shared_dir_cstr.as_ptr(),
-            0,
-            false,
-            self.permission_semantics.clone() as u32,
-        ) < 0
-        {
-            return Err(anyhow!(format!(
-                "unable to add virtiofs shared directory {} with mount tag {}",
-                &self.shared_dir.display(),
-                &self.mount_tag.display()
-            )));
-        }
-
-        Ok(())
     }
 }
 
@@ -732,14 +514,4 @@ impl FromStr for InputConfig {
             _ => Err(anyhow!("unknown virtio-input argument: {key}")),
         }
     }
-}
-
-/// Construct a NULL-terminated C string from a Rust Path object.
-fn path_to_cstring(path: &Path) -> Result<CString, anyhow::Error> {
-    let cstring = CString::new(path.as_os_str().as_bytes()).context(format!(
-        "unable to convert path {} into NULL-terminated C string",
-        path.display()
-    ))?;
-
-    Ok(cstring)
 }
