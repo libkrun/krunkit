@@ -276,6 +276,7 @@ On Windows, krunkit boots `edk2/OVMF.fd` by default. Use `--firmware-path PATH` 
 
 The Windows path can connect either `ttyS0` or `hvc0` to the host terminal. It supports raw and QCOW2
 `virtio-blk` images, path-based `virtio-net,type=unixstream` devices, and `virtio-vsock` Unix socket mappings.
+All virtio devices use the modern virtio-pci transport and are discovered through ACPI.
 
 ### Windows Limitations
 

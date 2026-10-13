@@ -48,8 +48,8 @@ unsafe extern "C" {
         options: u32,
         err_out: *mut KrunError,
     ) -> KrunResult;
-    fn krun_mmio_device_manager_new() -> KrunObject;
-    fn krun_mmio_device_manager_add(manager: KrunObject, device: KrunObject);
+    fn krun_pci_device_manager_new() -> KrunObject;
+    fn krun_pci_device_manager_add(manager: KrunObject, device: KrunObject);
     fn krun_console_device_builder() -> KrunObject;
     fn krun_console_builder_add_default_console(
         builder: KrunObject,
@@ -119,7 +119,7 @@ impl TryFrom<Args> for KrunContext {
             return Err(anyhow!("the RESTful service is not supported on Windows"));
         }
         init_logging(&args)?;
-        let devices = unsafe { krun_mmio_device_manager_new() };
+        let devices = unsafe { krun_pci_device_manager_new() };
         if devices.is_null() {
             return Err(anyhow!("unable to create libkrun device manager"));
         }
@@ -143,7 +143,7 @@ impl TryFrom<Args> for KrunContext {
             let mut error = ptr::null_mut();
             let console = unsafe { krun_console_builder_build(console_builder, &mut error) };
             check_object(console, error, "unable to build virtio console")?;
-            unsafe { krun_mmio_device_manager_add(devices, console) };
+            unsafe { krun_pci_device_manager_add(devices, console) };
         }
         add_device(
             devices,
@@ -236,7 +236,7 @@ fn add_device(
     if device.is_null() {
         return Err(anyhow!("unable to create {description} device"));
     }
-    unsafe { krun_mmio_device_manager_add(manager, device) };
+    unsafe { krun_pci_device_manager_add(manager, device) };
     Ok(())
 }
 fn init_logging(args: &Args) -> Result<(), anyhow::Error> {

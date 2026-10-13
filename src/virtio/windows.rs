@@ -36,7 +36,7 @@ impl KrunStr {
 
 #[link(name = "krun.dll")]
 unsafe extern "C" {
-    fn krun_mmio_device_manager_add(manager: KrunObject, device: KrunObject);
+    fn krun_pci_device_manager_add(manager: KrunObject, device: KrunObject);
     fn krun_block_device_new(
         id: KrunStr,
         path: KrunStr,
@@ -147,7 +147,7 @@ pub(crate) unsafe fn attach_devices(
             }
             _ => return Err(anyhow!("unsupported device on Windows: {config:?}")),
         };
-        unsafe { krun_mmio_device_manager_add(manager, device) };
+        unsafe { krun_pci_device_manager_add(manager, device) };
     }
     Ok(())
 }
