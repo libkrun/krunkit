@@ -279,3 +279,24 @@ The table below provides some data on how offloading effects the gvproxy and vmn
 | gvproxy       | krunkit  | false      |  1.47 Gbits/s |  2.58 Gbits/s |
 | gvproxy       | vfkit    | false      |  1.43 Gbits/s |  2.84 Gbits/s |
 
+
+## Measuring Memory Use on macOS
+
+Activity Monitor's "Memory" column, `top` and `footprint` show a process's physical footprint. For
+krunkit, that number can be much larger than the memory the virtual machine really takes from the
+host.
+
+macOS charges a page of guest memory to krunkit twice when krunkit writes it and the guest then
+uses it. krunkit writes guest memory on the guest's behalf for disk reads, received network
+packets, virtio-fs reads, and the kernel and initramfs at boot. The page exists only once; only the
+per-process accounting counts it twice. For example, after a guest reads a 600 MiB file from its
+disk, krunkit's footprint grows by about 1.2 GiB, while the guest's page cache grew by 600 MiB. When
+the guest drops its page cache, both go away.
+
+This comes from how Hypervisor.framework's memory is accounted, not from krunkit or libkrun: a
+minimal program that maps memory into a VM with `hv_vm_map()`, writes it, and has a vCPU read it
+shows the same doubling (libkrun/libkrun#947).
+
+To see what a virtual machine really costs the host, compare system-wide numbers before and after
+starting it: "Memory Used" and "Memory Pressure" in Activity Monitor's Memory tab, or `vm_stat`
+(the active, inactive, wired and compressor pages).
