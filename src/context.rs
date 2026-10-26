@@ -199,6 +199,10 @@ impl TryFrom<Args> for KrunContext {
             }
         }
 
+        if let Some(mode) = args.free_page_reporting {
+            set_balloon_free_page_reporting_mode(id, mode)?;
+        }
+
         if let Some(timesync_port) = args.timesync {
             let vsock_config = VsockConfig {
                 port: timesync_port,
@@ -248,6 +252,31 @@ impl KrunContext {
         }
 
         Ok(())
+    }
+}
+
+/// Calls krun_set_balloon_free_page_reporting_mode(), which is newer than the rest of the libkrun
+/// API that krunkit uses. It's looked up when the option is used rather than linked, so that
+/// krunkit still starts with a libkrun that doesn't have it.
+fn set_balloon_free_page_reporting_mode(ctx_id: u32, mode: u32) -> Result<(), anyhow::Error> {
+    type SetMode = unsafe extern "C" fn(u32, u32) -> i32;
+    extern "C" {
+        fn dlsym(handle: *mut std::ffi::c_void, symbol: *const c_char) -> *mut std::ffi::c_void;
+    }
+    // RTLD_DEFAULT on macOS: search every image loaded in the process.
+    const RTLD_DEFAULT: *mut std::ffi::c_void = -2isize as *mut std::ffi::c_void;
+
+    let symbol = c"krun_set_balloon_free_page_reporting_mode";
+    let f = unsafe { dlsym(RTLD_DEFAULT, symbol.as_ptr()) };
+    if f.is_null() {
+        return Err(anyhow!(
+            "--free-page-reporting needs a libkrun with krun_set_balloon_free_page_reporting_mode()"
+        ));
+    }
+    let set_mode: SetMode = unsafe { std::mem::transmute(f) };
+    match unsafe { set_mode(ctx_id, mode) } {
+        0 => Ok(()),
+        e => Err(anyhow!("unable to set the free page reporting mode: {e}")),
     }
 }
 

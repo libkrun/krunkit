@@ -68,6 +68,20 @@ pub struct Args {
     /// Vsock port for timesync
     #[arg(long = "timesync", value_parser = parse_timesync)]
     pub timesync: Option<u32>,
+
+    /// What the balloon does with the guest's free page reports: "default" madvise()s them,
+    /// which on macOS doesn't give back the pages the guest has written to; "replace" does.
+    #[arg(long = "free-page-reporting", value_parser = parse_free_page_reporting)]
+    pub free_page_reporting: Option<u32>,
+}
+
+/// The KRUN_FREE_PAGE_REPORTING_MODE_* value for a --free-page-reporting argument.
+pub fn parse_free_page_reporting(s: &str) -> Result<u32, String> {
+    match s {
+        "default" => Ok(0),
+        "replace" => Ok(1),
+        _ => Err("expected 'default' or 'replace'".to_string()),
+    }
 }
 
 fn parse_timesync(s: &str) -> Result<u32, String> {
@@ -313,6 +327,33 @@ mod tests {
         assert!(super::parse_memory("1B").is_err());
         assert!(super::parse_memory("1E").is_err());
         assert!(super::parse_memory("").is_err());
+    }
+
+    #[test]
+    fn free_page_reporting_parse() {
+        assert_eq!(super::parse_free_page_reporting("default"), Ok(0));
+        assert_eq!(super::parse_free_page_reporting("replace"), Ok(1));
+        assert!(super::parse_free_page_reporting("Replace").is_err());
+        assert!(super::parse_free_page_reporting("on").is_err());
+        assert!(super::parse_free_page_reporting("").is_err());
+    }
+
+    #[test]
+    fn free_page_reporting_flag() {
+        use clap::Parser;
+
+        let args = |extra: &[&str]| {
+            let mut argv = vec!["krunkit", "--cpus", "1", "--memory", "512"];
+            argv.extend_from_slice(extra);
+            super::Args::try_parse_from(argv).map(|a| a.free_page_reporting)
+        };
+
+        assert_eq!(args(&[]).unwrap(), None);
+        assert_eq!(
+            args(&["--free-page-reporting", "replace"]).unwrap(),
+            Some(1)
+        );
+        assert!(args(&["--free-page-reporting", "lazy"]).is_err());
     }
 
     #[test]

@@ -56,6 +56,27 @@ Enable Nested Virtualization.
 
 Note: this requires an M3 or newer CPU and macOS 15+.
 
+- `--free-page-reporting`
+
+What the balloon device does with the pages the guest reports as free, `default` or `replace`.
+
+`default`, which is what krunkit does without the option, has libkrun `madvise()` them. On macOS
+this doesn't give back the pages the guest has written to, so the VM's memory footprint only grows
+up to the RAM it was given, even after the guest frees it. `replace` has libkrun replace the
+reported pages with fresh memory, which gives them back to the host, at the cost of a few system
+calls per report.
+
+The guest only reports free pages if its kernel has `CONFIG_PAGE_REPORTING` and the virtio-balloon
+driver, and it reports them in blocks of 2 MiB, so free memory fragmented into smaller blocks stays
+in use. This requires a libkrun with `krun_set_balloon_free_page_reporting_mode()`; krunkit exits
+with an error if the option is used with an older one.
+
+#### Example
+
+```
+--free-page-reporting replace
+```
+
 #### Example
 
 This configures a virtual machine to use two vCPUs and 2048 MiB of RAM:
