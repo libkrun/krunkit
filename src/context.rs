@@ -220,12 +220,11 @@ impl KrunContext {
     /// Spawn a thread to listen for shutdown requests and run the workload. If behaving properly,
     /// the main thread will never return from this function.
     pub fn run(&self) -> Result<(), anyhow::Error> {
-        // Get the krun shutdown file descriptor and listen to shutdown requests on a new thread.
-        let shutdown_eventfd = unsafe { get_shutdown_eventfd(self.id) };
         let uri = self.args.restful_uri.clone();
 
-        // Only spawn a listener thread if the user specified unix:// or tcp://
+        // Only create a shutdown eventfd and listener for unix:// or tcp:// endpoints.
         if uri.as_ref().is_some_and(|u| *u != RestfulUri::None) {
+            let shutdown_eventfd = unsafe { get_shutdown_eventfd(self.id) };
             thread::spawn(move || status_listener(shutdown_eventfd, uri).unwrap());
         }
 
