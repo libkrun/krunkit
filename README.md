@@ -21,10 +21,9 @@ brew untap slp/krunkit
 
 ### Installing from Homebrew
 
-`krunkit` relies on `libkrun`. We provide a Homebrew repository to install `krunkit` and all of its dependencies, installable with:
+`krunkit` relies on `libkrun`. Homebrew provides a formula to install `krunkit` and all of its dependencies, installable as follows:
 
 ```
-brew tap slp/krun
 brew install krunkit
 ```
 
