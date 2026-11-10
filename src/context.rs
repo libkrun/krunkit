@@ -31,6 +31,7 @@ extern "C" {
     fn krun_set_smbios_oem_strings(ctx_id: u32, oem_strings: *const *const c_char) -> i32;
     fn krun_set_nested_virt(ctx_id: u32, enabled: bool) -> i32;
     fn krun_check_nested_virt() -> i32;
+    fn krun_set_reset_exit_code(ctx_id: u32, code: u8) -> i32;
     fn krun_start_enter(ctx_id: u32) -> i32;
 }
 
@@ -186,6 +187,12 @@ impl TryFrom<Args> for KrunContext {
         }
 
         set_smbios_oem_strings(id, &args.oem_strings)?;
+
+        if let Some(code) = args.reset_exit_code {
+            if unsafe { krun_set_reset_exit_code(id, code) } < 0 {
+                return Err(anyhow!("unable to set the reset exit code"));
+            }
+        }
 
         if args.nested {
             match unsafe { krun_check_nested_virt() } {
