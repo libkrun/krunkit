@@ -53,6 +53,11 @@ pub struct Args {
     #[arg(long, short)]
     pub nested: bool,
 
+    /// Exit with this code when the guest resets, so the caller can tell a reboot from a
+    /// power-off and start the VM again. Without it both end krunkit with exit code 0.
+    #[arg(long = "reset-exit-code")]
+    pub reset_exit_code: Option<u8>,
+
     /// Specify a pidfile path.
     #[arg(long)]
     pub pidfile: Option<PathBuf>,
@@ -533,12 +538,16 @@ mod tests {
             "5",
             "--pidfile",
             "/tmp/krunkit.pid",
+            "--reset-exit-code",
+            "32",
         ];
 
         let mut args = Args::try_parse_from(cmdline).unwrap();
 
         let pidfile = args.pidfile.expect("pidfile argument not found");
         assert_eq!(pidfile.to_str().unwrap(), "/tmp/krunkit.pid");
+
+        assert_eq!(args.reset_exit_code, Some(32));
 
         let net = args
             .devices

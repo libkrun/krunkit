@@ -25,6 +25,11 @@ The URI (address) of the RESTful service. If not specified, defaults to `none://
 
 Specify a path in which krunkit will write the PID to. The option does not provide any form of locking.
 
+- `--reset-exit-code`
+
+Exit with this code when the guest resets, so the caller can tell a reboot from a power-off and start the virtual
+machine again. Without the option, krunkit exits with 0 in both cases. Requires libkrun 1.19.8 or newer.
+
 - `--timesync`
 
 Specify a Vsock port on which the host will send the current time to
