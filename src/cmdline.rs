@@ -354,6 +354,24 @@ mod tests {
     }
 
     #[test]
+    fn virtio_blk_direct() {
+        use crate::virtio::BlkConfig;
+        use std::str::FromStr;
+
+        let blk = |s: &str| BlkConfig::from_str(s).map(|b| b.direct);
+
+        assert!(!blk("path=/Users/user/d.raw").unwrap());
+        assert!(blk("path=/Users/user/d.raw,direct=true").unwrap());
+        assert!(!blk("path=/Users/user/d.raw,direct=false").unwrap());
+        assert!(blk("path=/Users/user/d.raw,direct=on").unwrap());
+        assert!(blk("path=/Users/user/d.raw,direct=yes").is_err());
+
+        let both = BlkConfig::from_str("path=/Users/user/d.raw,sync=full,direct=true").unwrap();
+        assert_eq!(both.sync, Some(crate::virtio::DiskSyncMode::Full));
+        assert!(both.direct);
+    }
+
+    #[test]
     fn virtio_net_argument_ordering() {
         let in_order = super::parse_args(String::from(
             "unixSocketPath=/Users/user/vm-network.sock,mac=ff:ff:ff:ff:ff:ff",
@@ -503,7 +521,7 @@ mod tests {
             "--device",
             "virtio-serial,logFilePath=/Users/user/serial.log",
             "--device",
-            "virtio-blk,path=/Users/user/data.raw,format=raw,sync=full",
+            "virtio-blk,path=/Users/user/data.raw,format=raw,sync=full,direct=true",
             "--device",
             "virtio-vsock,port=1024,socketURL=/Users/user/vsock1.sock,listen",
             "--device",
@@ -727,6 +745,7 @@ mod tests {
             assert_eq!(blk.path, PathBuf::from_str("/Users/user/data.raw").unwrap());
             assert_eq!(blk.format, DiskImageFormat::Raw);
             assert_eq!(blk.sync, Some(DiskSyncMode::Full));
+            assert!(blk.direct);
         } else {
             panic!("expected virtio-blk device as 4th device config argument");
         }
@@ -764,6 +783,7 @@ mod tests {
             );
             assert_eq!(blk.format, DiskImageFormat::Qcow2);
             assert_eq!(blk.sync, None);
+            assert!(!blk.direct);
         } else {
             panic!("expected virtio-blk device as 1st device config argument");
         }
