@@ -231,6 +231,9 @@ pub struct BlkConfig {
 
     /// Flush handling. None leaves the choice to libkrun's platform default.
     pub sync: Option<DiskSyncMode>,
+
+    /// Bypass the host page cache for the disk image (F_NOCACHE on macOS).
+    pub direct: bool,
 }
 
 impl FromStr for BlkConfig {
@@ -253,6 +256,10 @@ impl FromStr for BlkConfig {
             blk_config.sync = Some(DiskSyncMode::from_str(s.as_str())?);
         }
 
+        if let Some(d) = args.remove("direct") {
+            blk_config.direct = parse_boolean(&d)?;
+        }
+
         check_unknown_args(args, "virtio-blk")?;
 
         Ok(blk_config)
@@ -269,22 +276,24 @@ impl KrunContextSet for BlkConfig {
         let block_id_cstr = CString::new(basename).context("can't convert basename to cstring")?;
         let path_cstr = path_to_cstring(&self.path)?;
 
-        let ret = match self.sync {
-            None => krun_add_disk2(
+        let ret = match (self.sync, self.direct) {
+            (None, false) => krun_add_disk2(
                 id,
                 block_id_cstr.as_ptr(),
                 path_cstr.as_ptr(),
                 self.format as u32,
                 false,
             ),
-            Some(sync) => krun_add_disk3(
+            // krun_add_disk3 takes an explicit sync mode; without sync= use Relaxed, which is
+            // what krun_add_disk2 picks on macOS, so direct=true alone only changes caching.
+            (sync, direct) => krun_add_disk3(
                 id,
                 block_id_cstr.as_ptr(),
                 path_cstr.as_ptr(),
                 self.format as u32,
                 false,
-                false,
-                sync as u32,
+                direct,
+                sync.unwrap_or(DiskSyncMode::Relaxed) as u32,
             ),
         };
         if ret < 0 {

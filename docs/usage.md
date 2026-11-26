@@ -101,6 +101,10 @@ platform default applies, which on macOS is `relaxed`.
     flush its own buffers; per fsync(2), on a drive power loss some or none of that data may be
     written, possibly out of order. Same as `full` on Linux.
     - `none`: the device does not offer flush to the guest.
+- `direct`: (Optional) `true` to bypass the host page cache for the disk image; on macOS this is
+`fcntl(F_NOCACHE)`. Useful when host memory is tight and the guest already caches what it reads,
+so the image data is not cached a second time on the host. Reads and writes no longer benefit
+from the host cache, so cold reads can be slower. Independent of `sync`. Default `false`.
 
 #### Example
 
